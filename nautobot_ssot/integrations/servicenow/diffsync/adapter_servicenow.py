@@ -11,7 +11,8 @@ from diffsync import Adapter
 from diffsync.enum import DiffSyncFlags
 from diffsync.exceptions import ObjectAlreadyExists, ObjectNotFound
 from jinja2 import Environment, FileSystemLoader
-
+from nautobot.extras.models import GitRepository
+from nautobot_ssot.integrations.servicenow.utils import lookup_content_type
 from . import models
 
 
@@ -27,10 +28,12 @@ class ServiceNowDiffSync(Adapter):
     interface = models.Interface  # child of device
     location = models.Location
     product_model = models.ProductModel  # child of company
+    git_repository = GitRepository
 
     top_level = [
         "company",
         "location",
+        "git_repository"
     ]
 
     DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "data"))
@@ -50,9 +53,42 @@ class ServiceNowDiffSync(Adapter):
         # create all of these interfaces in a single API call.
         self.interfaces_to_create_per_device = {}
 
+    def load_git_repository(self, git_repo, branch_vars):
+        """Load GitRepository objects from ServiceNow into DiffSync models."""
+        if self.job.debug:
+            self.job.logger.debug(f"Loading ServiceNow GitRepository: {git_repo}")
+        try:
+            self.get(self.git_repository, git_repo["name"])
+        except ObjectNotFound:
+            _data_types = []
+            for con_type in git_repo["provided_data_type"]:
+                _content_type = lookup_content_type(
+                    content_model_path="extras.gitrepository", content_type=con_type
+                )
+                _data_types.append(_content_type)
+            if git_repo.get("branch"):
+                _branch = git_repo["branch"]
+            else:
+                _branch = branch_vars["git_branch"]
+            new_git_repository = self.git_repository(
+                name=git_repo["name"],
+                url=git_repo["url"],
+                branch=_branch,
+                provided_contents=_data_types,
+                secrets_group=git_repo["secrets_group_name"],
+                system_of_record=os.getenv("SYSTEM_OF_RECORD", "Bootstrap"),
+            )
+            self.add(new_git_repository)
+            _data_types.clear()
+
     def load(self):
         """Load data via pysnow."""
-        self.mapping_data = self.load_yaml_datafile("mappings.yaml")
+        if settings.PLUGINS_CONFIG["nautobot_ssot"].get("service_now_data_mappings"):
+            self.mapping_data = self.load_git_repository(
+                git_repo=git_repo, branch_vars=branch_vars
+            )
+        else:
+            self.mapping_data = self.load_yaml_datafile("mappings.yaml")
 
         for modelname, entry in self.mapping_data.items():
             if modelname == "location" and self.site_filter is not None:

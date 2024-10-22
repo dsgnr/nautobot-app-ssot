@@ -4,6 +4,7 @@ import logging
 
 from django.conf import settings
 from nautobot.extras.choices import SecretsGroupAccessTypeChoices, SecretsGroupSecretTypeChoices
+from nautobot.extras.datasources.registry import get_datasource_content_choices
 
 from .models import SSOTServiceNowConfig
 
@@ -38,3 +39,14 @@ def get_servicenow_parameters():
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("Unable to retrieve ServiceNow username: %s", exc)
     return result
+
+
+def lookup_content_type(content_model_path, content_type):
+    """Lookup content type for a GitRepository object."""
+    _choices = get_datasource_content_choices(content_model_path)
+    _found_type = None
+    for _element in _choices:
+        if _element[1] == content_type:
+            _found_type = _element[0]
+            return _found_type
+    return None
